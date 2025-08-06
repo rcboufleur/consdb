@@ -71,33 +71,29 @@ jobs:
           token: ${{ secrets.SDM_REPO_PAT }}
 
       # Copy new or modified schema files to destination. Set 'has_changes' output.
-      - name: Synchronize Schemas (Update Only, excluding specific file)
+      - name: Synchronize sdm_schemas from consdb (Safe, Add/Update Only)
         if: steps.validate.outputs.should_sync == 'true'
         id: apply_changes
         run: |
-          SOURCE_DIR="${{ env.SOURCE_YML_DIR }}/"
-          DEST_DIR="${{ env.DEST_YML_DIR }}/"
-          
-          if [ ! -d "$SOURCE_DIR" ]; then
-            echo "Source directory '${{ env.SOURCE_YML_DIR }}' not found. No sync needed."
+          set -e
+          SOURCE_YML_DIR="consdb_source/python/lsst/consdb/transformed_efd/schemas/yml"
+          DEST_YML_DIR="sdm_schemas_dest/python/lsst/sdm/schemas"
+          has_changes=false
+          if [ ! -d "$SOURCE_YML_DIR" ]; then
             echo "has_changes=false" >> $GITHUB_OUTPUT
             exit 0
           fi
-          
-          mkdir -p "$DEST_DIR"
-          
-          echo "Syncing from $SOURCE_DIR to $DEST_DIR"
-          
-          rsync -avc --existing --exclude='efd_scheduler.yaml' --out-format='%n' "$SOURCE_DIR" "$DEST_DIR" > changed_files.txt
-          
-          if [ -s changed_files.txt ]; then
-            echo "Changes detected. The following files were updated:"
-            cat changed_files.txt
-            echo "has_changes=true" >> $GITHUB_OUTPUT
-          else
-            echo "No existing files required an update."
-            echo "has_changes=false" >> $GITHUB_OUTPUT
-          fi
+          mkdir -p "$DEST_YML_DIR"
+          while read -r source_file; do
+            filename=$(basename "$source_file")
+            dest_file="$DEST_YML_DIR/$filename"
+            if [ ! -f "$dest_file" ] || ! diff -q "$source_file" "$dest_file" >/dev/null 2>&1; then
+              echo "Syncing: $filename"
+              cp "$source_file" "$dest_file"
+              has_changes=true
+            fi
+          done < <(find "$SOURCE_YML_DIR" -type f -not -name "efd_scheduler.yaml")
+          echo "has_changes=$has_changes" >> $GITHUB_OUTPUT
 
       # Create a PR in the destination repo if changes were found.
       - name: Create Pull Request in sdm_schemas
